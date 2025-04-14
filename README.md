@@ -124,7 +124,7 @@ python extract_qa.py documents/ -r
 
 自定义提示和块大小：
 ```bash
-python extract_qa.py documents/ -c 2000 -p "生成关于技术概念的详细QA对"
+python extract_qa.py documents/ -c 6000 -p "从这段文本中提取有意义的问答对。包括事实信息和关键概念。格式化输出为包含'question','answer'字段的JSON数组。如果没有合适的内容，请返回空数组。"
 ```
 
 ## 输出结构
