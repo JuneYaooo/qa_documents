@@ -33,26 +33,36 @@
 ]
 ```
 
-## 4. 配置方式
+## 4. 模型配置方式
 
-工具支持以下方式配置API端点、文件路径等参数：
-
-### 配置文件 `.env`
-
-```
-# OpenAI API Configuration
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL_NAME=gpt-4-1106-preview
-
-# Optional: Set to True to enable detailed logging
-DEBUG=False
-```
-
-### 环境变量
-- `OPENAI_API_KEY` - OpenAI API密钥
+- `OPENAI_API_KEY` - API密钥
 - `OPENAI_BASE_URL` - API基础URL
 - `OPENAI_MODEL_NAME` - 使用的模型名称
+
+> **注意**：虽然变量名以OPENAI开头，但本工具也支持其他大语言模型，如Deepseek、Qwen等。只需修改相应的BASE_URL和MODEL_NAME即可。
+环境变量可以通过以下两种方式之一进行设置：
+
+### 配置文件 `.env`
+复制目录里的.env.example 改成.env ，然后编辑.env里的变量
+```
+# API Configuration
+OPENAI_API_KEY=your_api_key_here
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+OPENAI_MODEL_NAME=deepseek-chat
+```
+
+### 命令行设置方式
+
+```bash
+# 设置 API 密钥
+export OPENAI_API_KEY=your_api_key_here
+
+# 设置 API 基础 URL（根据使用的模型提供商调整）
+export OPENAI_BASE_URL=https://api.deepseek.com/v1
+
+# 设置使用的模型名称
+export OPENAI_MODEL_NAME=deepseek-chat
+```
 
 ### 命令行参数
 
@@ -75,7 +85,7 @@ python extract_qa.py path/to/documents/ -r
 python extract_qa.py path/to/document.pdf -o custom_output -c 1500
 
 # 自定义提取提示
-python extract_qa.py path/to/document.pdf -p "生成关于技术概念的详细QA对"
+python extract_qa.py path/to/document.pdf -p "从这段文本中提取有意义的问答对。包括事实信息和关键概念。格式化输出为包含'question','answer'字段的JSON数组。如果没有合适的内容，请返回空数组。"
 ```
 
 ## 命令行选项
@@ -84,7 +94,7 @@ python extract_qa.py path/to/document.pdf -p "生成关于技术概念的详细Q
 
 - `input`: 要处理的输入文件或目录路径（必需，位置参数）
 - `--output`, `-o`: 保存QA对的输出目录（默认："output"）
-- `--chunk-size`, `-c`: 文档处理的最大块大小（默认：2000）
+- `--chunk-size`, `-c`: 文档处理的最大块大小（默认：5000）
 - `--prompt`, `-p`: QA提取提示（默认：生成JSON格式的问答对）
 - `--recursive`, `-r`: 递归处理目录
 
