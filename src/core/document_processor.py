@@ -102,12 +102,14 @@ class DocumentProcessor:
                     
         # 0. 首先尝试使用OCR API
         try:
+            logger.info(f"尝试使用MinuerU API提取文件 {filename}...")
             with open(filepath, 'rb') as file:
                 pdf = PyPDF2.PdfReader(file)
                 num_pages = len(pdf.pages)
                 all_markdown_content = []
                 
                 for i in range(0, num_pages, 20):
+                    logger.info(f"正在处理第 {i//20+1} 页到第 {min(i + 20, num_pages)//20+1} 页")
                     end_page = min(i + 20, num_pages)
                     
                     # 创建一个新的 PDF 写入器
