@@ -29,7 +29,7 @@ class DocumentProcessor:
         """
         self.max_chunk_size = max_chunk_size
         # 从环境变量获取MinerU API URL
-        self.ocr_api_url = os.getenv('MINERU_API_URL', 'https://pdf-parsing.dev.6ccloud.com/pdf_parsing_api')
+        self.ocr_api_url = os.getenv('MINERU_API_URL', '')
     
     def process_uploaded_files(self, files_list) -> List[Dict[str, Any]]:
         """
@@ -100,58 +100,61 @@ class DocumentProcessor:
                 except UnicodeDecodeError:
                     return text
                     
-        # 0. 首先尝试使用OCR API
-        try:
-            logger.info(f"尝试使用MinuerU API提取文件 {filename}...")
-            with open(filepath, 'rb') as file:
-                pdf = PyPDF2.PdfReader(file)
-                num_pages = len(pdf.pages)
-                all_markdown_content = []
+        # 0. 首先尝试使用OCR API (如果API URL不为空)
+        if self.ocr_api_url:
+            try:
+                logger.info(f"尝试使用MinuerU API提取文件 {filename}...")
+                with open(filepath, 'rb') as file:
+                    pdf = PyPDF2.PdfReader(file)
+                    num_pages = len(pdf.pages)
+                    all_markdown_content = []
+                    
+                    for i in range(0, num_pages, 20):
+                        logger.info(f"正在处理第 {i//20+1} 页到第 {min(i + 20, num_pages)//20+1} 页")
+                        end_page = min(i + 20, num_pages)
+                        
+                        # 创建一个新的 PDF 写入器
+                        pdf_writer = PyPDF2.PdfWriter()
+                        for page_num in range(i, end_page):
+                            pdf_writer.add_page(pdf.pages[page_num])
+                        
+                        # 将切分后的 PDF 保存到内存中
+                        temp_pdf = io.BytesIO()
+                        pdf_writer.write(temp_pdf)
+                        temp_pdf.seek(0)
+                        
+                        # 发送请求到OCR API
+                        files = {'pdf_file': (f'{filename}_part_{i//20+1}.pdf', temp_pdf, 'application/pdf')}
+                        response = requests.post(self.ocr_api_url, files=files, headers={'accept': 'application/json'}, timeout=600)
+                        
+                        # 处理响应
+                        if response.status_code == 200:
+                            response_json = response.json()
+                            markdown_content = response_json.get('markdown', '')
+                            if markdown_content:
+                                all_markdown_content.append(markdown_content)
+                        elif response.status_code in [400, 404, 420, 500]:
+                            logger.error(f"OCR API返回状态码 {response.status_code}, 文件: {filename} 部分: {i//20+1}")
+                            # 记录错误但继续尝试其他页
+                        else:
+                            logger.error(f"OCR API返回异常状态码: {response.status_code}")
+                    
+                    if all_markdown_content:
+                        combined_ocr_text = clean_text("".join(all_markdown_content))
+                        logger.info(f"OCR API提取内容: {combined_ocr_text[:50]}...")
+                        if combined_ocr_text and not self.is_text_garbled(combined_ocr_text):
+                            result['file_content'] = combined_ocr_text
+                            result['chunks'] = self.split_content_to_chunks(combined_ocr_text)
+                            return result
+                    logger.info(f"OCR结果为空或乱码，文件: {filename}")
                 
-                for i in range(0, num_pages, 20):
-                    logger.info(f"正在处理第 {i//20+1} 页到第 {min(i + 20, num_pages)//20+1} 页")
-                    end_page = min(i + 20, num_pages)
-                    
-                    # 创建一个新的 PDF 写入器
-                    pdf_writer = PyPDF2.PdfWriter()
-                    for page_num in range(i, end_page):
-                        pdf_writer.add_page(pdf.pages[page_num])
-                    
-                    # 将切分后的 PDF 保存到内存中
-                    temp_pdf = io.BytesIO()
-                    pdf_writer.write(temp_pdf)
-                    temp_pdf.seek(0)
-                    
-                    # 发送请求到OCR API
-                    files = {'pdf_file': (f'{filename}_part_{i//20+1}.pdf', temp_pdf, 'application/pdf')}
-                    response = requests.post(self.ocr_api_url, files=files, headers={'accept': 'application/json'}, timeout=600)
-                    
-                    # 处理响应
-                    if response.status_code == 200:
-                        response_json = response.json()
-                        markdown_content = response_json.get('markdown', '')
-                        if markdown_content:
-                            all_markdown_content.append(markdown_content)
-                    elif response.status_code in [400, 404, 420, 500]:
-                        logger.error(f"OCR API返回状态码 {response.status_code}, 文件: {filename} 部分: {i//20+1}")
-                        # 记录错误但继续尝试其他页
-                    else:
-                        logger.error(f"OCR API返回异常状态码: {response.status_code}")
-                
-                if all_markdown_content:
-                    combined_ocr_text = clean_text("".join(all_markdown_content))
-                    logger.info(f"OCR API提取内容: {combined_ocr_text[:50]}...")
-                    if combined_ocr_text and not self.is_text_garbled(combined_ocr_text):
-                        result['file_content'] = combined_ocr_text
-                        result['chunks'] = self.split_content_to_chunks(combined_ocr_text)
-                        return result
-                logger.info(f"OCR结果为空或乱码，文件: {filename}")
-            
-        except Exception as e:
-            logger.error(f"OCR API处理 {filename} 失败: {e}")
-            if 'response' in locals():
-                logger.error(f"状态码: {response.status_code}")
-                logger.error(f"响应: {response.text[:200]}")
+            except Exception as e:
+                logger.error(f"OCR API处理 {filename} 失败: {e}")
+                if 'response' in locals():
+                    logger.error(f"状态码: {response.status_code}")
+                    logger.error(f"响应: {response.text[:200]}")
+        else:
+            logger.info(f"OCR API URL为空，跳过MinuerU API处理步骤")
 
         # 0.5. 尝试使用pymupdf4llm
         try:
