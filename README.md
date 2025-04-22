@@ -38,7 +38,7 @@
 - `OPENAI_API_KEY` - API密钥
 - `OPENAI_BASE_URL` - API基础URL
 - `OPENAI_MODEL_NAME` - 使用的模型名称
-- `MINERU_API_URL` - 自己部署的minueru api(如果不加这个，无法提取图片类PDF)
+- `MINERU_API_URL` - 自己部署或者官网的minueru api，比如官网的https://mineru.net/api/v4 (如果不加这个，无法提取图片类PDF)
 - `MINERU_API_KEY` - 官方的mineru api key
 - `MINERU_MODE` - 使用的minerU API方式 可选值 web_api（官网格式）, local_api（本地格式）
 
