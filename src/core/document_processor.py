@@ -11,6 +11,8 @@ import requests
 from typing import Dict, List, Any, Optional
 from ..utils.logger import BeijingLogger
 from dotenv import load_dotenv
+import time
+from io import BytesIO
 
 # 加载环境变量
 load_dotenv()
@@ -100,10 +102,11 @@ class DocumentProcessor:
                 except UnicodeDecodeError:
                     return text
                     
-        # 0. 首先尝试使用OCR API (如果API URL不为空)
-        if self.ocr_api_url:
+        # 0. 首先尝试使用Mineru API处理
+        mineru_mode = os.getenv('MINERU_MODE', '')
+        if mineru_mode:
             try:
-                logger.info(f"尝试使用MinuerU API提取文件 {filename}...")
+                logger.info(f"尝试使用Mineru API ({mineru_mode})提取文件 {filename}...")
                 with open(filepath, 'rb') as file:
                     pdf = PyPDF2.PdfReader(file)
                     num_pages = len(pdf.pages)
@@ -123,38 +126,44 @@ class DocumentProcessor:
                         pdf_writer.write(temp_pdf)
                         temp_pdf.seek(0)
                         
-                        # 发送请求到OCR API
-                        files = {'pdf_file': (f'{filename}_part_{i//20+1}.pdf', temp_pdf, 'application/pdf')}
-                        response = requests.post(self.ocr_api_url, files=files, headers={'accept': 'application/json'}, timeout=600)
+                        # 根据MINERU_MODE处理该部分PDF
+                        temp_file_path = f"/tmp/{filename}_part_{i//20+1}.pdf"
+                        with open(temp_file_path, 'wb') as tmp_file:
+                            tmp_file.write(temp_pdf.getvalue())
                         
-                        # 处理响应
-                        if response.status_code == 200:
-                            response_json = response.json()
-                            markdown_content = response_json.get('markdown', '')
+                        try:
+                            markdown_content = ""
+                            if mineru_mode == 'web_api':
+                                markdown_content = self.parse_pdf_to_markdown_mineru_web_api(temp_file_path)
+                            elif mineru_mode == 'local_api':
+                                markdown_content = self.parse_pdf_to_markdown_mineru_local_api(temp_file_path)
+                            else:
+                                logger.info(f"未知的MINERU_MODE值: {mineru_mode}，跳过Mineru API处理")
+                                
                             if markdown_content:
                                 all_markdown_content.append(markdown_content)
-                        elif response.status_code in [400, 404, 420, 500]:
-                            logger.error(f"OCR API返回状态码 {response.status_code}, 文件: {filename} 部分: {i//20+1}")
-                            # 记录错误但继续尝试其他页
-                        else:
-                            logger.error(f"OCR API返回异常状态码: {response.status_code}")
+                            
+                            # 删除临时文件
+                            if os.path.exists(temp_file_path):
+                                os.remove(temp_file_path)
+                                
+                        except Exception as e:
+                            logger.error(f"处理PDF部分 {i//20+1} 失败: {e}")
+                            # 继续处理其他部分
                     
                     if all_markdown_content:
                         combined_ocr_text = clean_text("".join(all_markdown_content))
-                        logger.info(f"OCR API提取内容: {combined_ocr_text[:50]}...")
+                        logger.info(f"Mineru API提取内容: {combined_ocr_text[:50]}...")
                         if combined_ocr_text and not self.is_text_garbled(combined_ocr_text):
                             result['file_content'] = combined_ocr_text
                             result['chunks'] = self.split_content_to_chunks(combined_ocr_text)
                             return result
-                    logger.info(f"OCR结果为空或乱码，文件: {filename}")
+                    logger.info(f"Mineru API结果为空或乱码，文件: {filename}")
                 
             except Exception as e:
-                logger.error(f"OCR API处理 {filename} 失败: {e}")
-                if 'response' in locals():
-                    logger.error(f"状态码: {response.status_code}")
-                    logger.error(f"响应: {response.text[:200]}")
+                logger.error(f"Mineru API ({mineru_mode})处理 {filename} 失败: {e}")
         else:
-            logger.info(f"OCR API URL为空，跳过MinuerU API处理步骤")
+            logger.info(f"MINERU_MODE环境变量未设置，跳过Mineru API处理步骤")
 
         # 0.5. 尝试使用pymupdf4llm
         try:
@@ -446,3 +455,171 @@ class DocumentProcessor:
         
         return result
     
+    def parse_pdf_to_markdown_mineru_web_api(self, pdf_path, is_ocr=False, enable_formula=True, enable_table=True, save_to_file=False, output_dir="output/mineru"):
+        """
+        使用Mineru Web API将本地PDF文件解析为Markdown内容
+        
+        参数:
+            pdf_path (str): 本地PDF文件的路径
+            is_ocr (bool, optional): 是否使用OCR。默认为False
+            enable_formula (bool, optional): 是否启用公式识别。默认为True
+            enable_table (bool, optional): 是否启用表格识别。默认为True
+            save_to_file (bool, optional): 是否将Markdown保存到文件。默认为False
+            output_dir (str, optional): 保存Markdown文件的目录。默认为"output/mineru"
+            
+        返回:
+            str: PDF的Markdown内容
+        """
+        # 步骤1: 获取文件上传URL
+        upload_url = f"{os.getenv('MINERU_API_URL')}/file-urls/batch"
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f"Bearer {os.getenv('MINERU_API_KEY')}"
+        }
+        
+        filename = os.path.basename(pdf_path)
+        data = {
+            "enable_formula": enable_formula,
+            "enable_table": enable_table,
+            "files": [{"name": filename, "is_ocr": is_ocr}]
+        }
+        
+        try:
+            response = requests.post(upload_url, headers=headers, json=data)
+            if response.status_code != 200:
+                raise Exception(f"获取上传URL失败: {response.text}")
+            
+            result = response.json()
+            if result["code"] != 0:
+                raise Exception(f"API错误: {result['msg']}")
+            
+            batch_id = result["data"]["batch_id"]
+            file_url = result["data"]["file_urls"][0]
+            
+            # 步骤2: 上传文件
+            with open(pdf_path, 'rb') as f:
+                upload_response = requests.put(file_url, data=f)
+                if upload_response.status_code != 200:
+                    raise Exception(f"上传文件失败: {upload_response.text}")
+            
+            # 步骤3: 轮询结果
+            status_url = f"{os.getenv('MINERU_API_URL')}/extract-results/batch/{batch_id}"
+            max_retries = 60  # 最大等待时间: 10分钟
+            wait_time = 10  # 秒
+            
+            for _ in range(max_retries):
+                time.sleep(wait_time)
+                status_response = requests.get(status_url, headers=headers)
+                
+                if status_response.status_code != 200:
+                    raise Exception(f"获取任务状态失败: {status_response.text}")
+                
+                status_result = status_response.json()
+                if status_result["code"] != 0:
+                    raise Exception(f"API错误: {status_result['msg']}")
+                
+                extract_results = status_result["data"]["extract_result"]
+                for result in extract_results:
+                    if result["file_name"] == filename:
+                        if result["state"] == "done":
+                            # 步骤4: 下载结果
+                            zip_url = result["full_zip_url"]
+                            zip_response = requests.get(zip_url)
+                            
+                            if zip_response.status_code != 200:
+                                raise Exception(f"下载结果失败: {zip_response.text}")
+                            
+                            # 步骤5: 提取Markdown内容
+                            with zipfile.ZipFile(BytesIO(zip_response.content)) as z:
+                                markdown_files = [f for f in z.namelist() if f.endswith('.md')]
+                                if not markdown_files:
+                                    raise Exception("在结果中未找到Markdown文件")
+                                
+                                # 获取Markdown内容
+                                markdown_content = z.read(markdown_files[0]).decode('utf-8')
+                                
+                                # 如果需要，将Markdown保存到文件
+                                if save_to_file:
+                                    # 如果输出目录不存在，创建它
+                                    os.makedirs(output_dir, exist_ok=True)
+                                    
+                                    # 生成输出文件名
+                                    base_filename = os.path.splitext(filename)[0]
+                                    output_path = os.path.join(output_dir, f"{base_filename}.md")
+                                    
+                                    # 将Markdown内容保存到文件
+                                    with open(output_path, 'w', encoding='utf-8') as file:
+                                        file.write(markdown_content)
+                                    print(f"Markdown内容已保存至: {output_path}")
+                                
+                                return markdown_content
+                        
+                        elif result["state"] == "failed":
+                            raise Exception(f"任务失败: {result.get('err_msg', '未知错误')}")
+            
+            raise Exception("任务处理超时")
+        
+        except Exception as e:
+            raise Exception(f"解析PDF出错: {str(e)}")
+
+    def parse_pdf_to_markdown_mineru_local_api(self, pdf_path, api_url=None, save_to_file=False, output_dir="output/mineru"):
+        """
+        使用Mineru本地API将PDF文件解析为Markdown内容
+        
+        参数:
+            pdf_path (str): 本地PDF文件的路径
+            api_url (str, optional): 本地Mineru端点的API URL。如果为None，则使用环境变量中的MINERU_API_URL
+            save_to_file (bool, optional): 是否将Markdown保存到文件。默认为False
+            output_dir (str, optional): 保存Markdown文件的目录。默认为"output/mineru"
+            
+        返回:
+            str: PDF的Markdown内容
+        """
+        try:
+            filename = os.path.basename(pdf_path)
+            
+            # 使用提供的API URL或从环境变量获取
+            url = api_url or os.getenv('MINERU_API_URL', 'http://localhost:8000/pdf_parse?parse_method=auto')
+            
+            logger.info(f"使用Mineru本地API解析PDF: {filename}")
+            
+            # 准备请求
+            payload = {}
+            files = [
+                ('pdf_file', (filename, open(pdf_path, 'rb'), 'application/pdf'))
+            ]
+            headers = {
+                'accept': 'application/json'
+            }
+            
+            # 发送请求
+            response = requests.request("POST", url, headers=headers, data=payload, files=files, timeout=600)
+            
+            # 检查响应状态
+            if response.status_code != 200:
+                raise Exception(f"API请求失败，状态码 {response.status_code}: {response.text}")
+            
+            # 解析响应
+            response_data = response.json()
+            content_list = response_data.get('content_list', [])
+            md_content = response_data.get('md_content', '')
+            
+            # 如果需要，将Markdown保存到文件
+            if save_to_file and md_content:
+                # 如果输出目录不存在，创建它
+                os.makedirs(output_dir, exist_ok=True)
+                
+                # 生成输出文件名
+                base_filename = os.path.splitext(filename)[0]
+                output_path = os.path.join(output_dir, f"{base_filename}.md")
+                
+                # 将Markdown内容保存到文件
+                with open(output_path, 'w', encoding='utf-8') as file:
+                    file.write(md_content)
+                logger.info(f"Markdown内容已保存至: {output_path}")
+            
+            return md_content
+            
+        except Exception as e:
+            logger.error(f"使用Mineru本地API解析PDF时出错: {str(e)}")
+            raise Exception(f"解析PDF出错: {str(e)}")

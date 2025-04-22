@@ -39,6 +39,8 @@
 - `OPENAI_BASE_URL` - API基础URL
 - `OPENAI_MODEL_NAME` - 使用的模型名称
 - `MINERU_API_URL` - 自己部署的minueru api(如果不加这个，无法提取图片类PDF)
+- `MINERU_API_KEY` - 官方的mineru api key
+- `MINERU_MODE` - 使用的minerU API方式 可选值 web_api（官网格式）, local_api（本地格式）
 
 > **注意**：虽然变量名以OPENAI开头，但本工具也支持其他大语言模型，如Deepseek、Qwen等。只需修改相应的BASE_URL和MODEL_NAME即可。
 环境变量可以通过以下两种方式之一进行设置：
@@ -51,6 +53,8 @@ OPENAI_API_KEY=your_api_key_here
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL_NAME=deepseek-chat
 MINERU_API_URL=your_minueru_api
+MINERU_API_KEY=your_mineru_apikey
+MINERU_MODE=web_api # 可选值 web_api（官网格式）, local_api（本地格式）
 ```
 
 ### 命令行设置方式
@@ -67,6 +71,10 @@ export OPENAI_MODEL_NAME=deepseek-chat
 
 # minuerU的API URL
 export MINERU_API_URL=your_minueru_api
+
+export MINERU_API_KEY=your_mineru_apikey
+
+export MINERU_MODE=web_api
 ```
 
 ### 命令行参数
